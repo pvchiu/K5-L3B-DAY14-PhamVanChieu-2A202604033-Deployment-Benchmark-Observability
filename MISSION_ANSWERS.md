@@ -1,7 +1,5 @@
 # Day 14 Lab — Mission Answers
 
-**Họ và tên:** Phạm Văn Chiêu  
-**Mã số sinh viên:** 2A202604033  
 **Lớp:** K5-L3B  
 
 ---
@@ -16,6 +14,18 @@
 5. **Stateful Design (Lưu state trong RAM):** Lịch sử hội thoại lưu trong danh sách bộ nhớ tạm thời (`_history = []`), dẫn đến việc mất dữ liệu khi restart app hoặc lỗi đồng bộ khi chạy multi-instance.
 6. **Không có Graceful Shutdown:** Ứng dụng ngắt ngang khi nhận SIGTERM, làm hủy hoại các request đang xử lý dở.
 7. **Logging dạng Text thô:** Log in ra terminal bằng `print()` hoặc text thông thường, không thể phân tích và truy vấn tập trung bằng các hệ thống observability (ELK, Loki).
+
+### Exercise 1.2: Chạy bản develop
+
+App mẫu bind vào loopback, vì vậy hai request được gọi từ bên trong container chạy bản develop.
+
+```text
+GET / → HTTP 200
+{"message":"Hello! Agent is running on my machine :)"}
+
+POST /ask?question=Hello → HTTP 200
+{"answer":"Tôi là AI agent được deploy lên cloud. Câu hỏi của bạn đã được nhận."}
+```
 
 ### Exercise 1.3: Comparison table
 
@@ -38,19 +48,27 @@
 4. **Bảo mật Non-root user:** Chạy ứng dụng dưới quyền user không có đặc quyền (`appuser`) thay vì `root`, ngăn chặn nguy cơ leo thang đặc quyền khi container bị tấn công.
 
 ### Exercise 2.3: Image size comparison
-- **Develop image (Single-stage, full Python):** ~1020 MB
-- **Production image (Multi-stage, slim):** 238 MB (đo thực tế bằng `check_production_ready.py`)
-- **Chênh lệch giảm dung lượng:** ~76.7% (giúp tiết kiệm băng thông và tăng tốc độ deploy/cold-start đáng kể).
+Build hai image từ gốc repo với Dockerfile tương ứng rồi đo bằng `docker image inspect`.
+
+| Image | Kích thước |
+|---|---:|
+| Develop, single-stage | 1.667,79 MB |
+| Production, multi-stage | 239,84 MB |
+
+Image production nhỏ hơn khoảng **85,62%**. Stage builder giữ compiler và công cụ build, còn runtime dùng base slim và copy các dependency đã cài.
 
 ### Exercise 2.4: Sơ đồ Service Stack và Kết quả qua Nginx
-- Sơ đồ: `Client -> Nginx (Reverse Proxy / Load Balancer port 80) -> Agent 1 / Agent 2 / Agent 3 -> Redis (State/Session)`
-- Gọi API qua Nginx: Request phân phối đều giữa các instance (Load balancing round-robin) và trả về HTTP 200 kèm `instance_id` khác nhau.
+- Sơ đồ: `Client → Nginx → Agent → Redis (state) và Qdrant (vector store)`.
+- Kiểm tra image develop: `GET /health` trả HTTP 200 với `{"status":"ok","uptime_seconds":2.8,"container":true}`.
+- Kiểm tra stack production qua Nginx trên cổng local 18102: `GET /health` trả HTTP 200, `status=ok`, `version=2.0.0`. `POST /ask` với câu hỏi `Explain microservices` trả HTTP 200 và câu trả lời mock.
 
 ---
 
 ## Part 3: Cloud Deployment
 
 ### Exercise 3.1 & 3.2: So sánh Railway vs Render
+
+- URL public trên Railway: https://k5-l3b-day14-phamvanchieu-2a202604033-deployment-production.up.railway.app
 - **Railway (`railway.toml`):**
   - Cấu hình gọn gàng, hỗ trợ khai báo builder (`DOCKERFILE`), chỉ định healthcheck path (`/health`) và chính sách tự động restart.
   - Tích hợp sẵn Redis plugin kết nối mạng nội bộ private rất nhanh.
@@ -60,9 +78,10 @@
 
 ### Exercise 3.3: Mô tả Pipeline CI/CD trên Google Cloud Run
 Đọc từ `cloudbuild.yaml` và `service.yaml`:
-1. **Build Step:** Cloud Build kích hoạt khi có commit, sử dụng Docker build multi-stage đóng gói agent thành container image.
-2. **Push Step:** Image được đẩy lên Google Artifact Registry (hoặc Container Registry) có gắn tag commit SHA.
-3. **Deploy Step:** Cloud Build gọi lệnh `gcloud run services replace service.yaml` để cập nhật revision mới trên Cloud Run với cơ chế Zero-Downtime, tự động scale to zero khi không có request và scale out khi tải tăng.
+1. Bước `test` cài dependencies và chạy kiểm tra trước khi build.
+2. Bước `build` tạo Docker image với hai tag `$COMMIT_SHA` và `latest`.
+3. Bước `push` đẩy image lên Container Registry. Bước `deploy` gọi `gcloud run deploy` với image gắn tag commit để Cloud Run tạo revision mới.
+4. `service.yaml` mô tả cấu hình service, gồm container và thiết lập tài nguyên, scale.
 
 ---
 
@@ -101,17 +120,40 @@ content-type: application/json
 ## Part 5: Scaling & Reliability
 
 ### Exercise 5.1 – 5.5: Phân tích và Thực nghiệm
+
 1. **Liveness (`/health`) vs Readiness (`/ready`):**
    - `/health`: Báo hiệu tiến trình app còn sống. Luôn trả 200 khi container đang chạy (dù Redis tạm thời mất kết nối). Nếu endpoint này chết, orchestrator sẽ kill và restart container.
    - `/ready`: Báo hiệu agent đã sẵn sàng nhận traffic phục vụ người dùng (phải kết nối được Redis). Nếu mất kết nối Redis, `/ready` trả 503 để Load Balancer tạm thời không chuyển request tới instance này.
+
 2. **Stateless với Redis:**
-   - Khi chạy 3 instances agent, request của cùng 1 user được phân phối tới instance ngẫu nhiên. Nhờ lưu trữ rate limit và session state trên Redis dùng chung, người dùng không bao giờ bị mất ngữ cảnh hay bypass được giới hạn tốc độ.
+   - Chạy kịch bản `test_stateless.py` trên stack Part 5 với ba replica. Dùng cổng local 18105 trong lần kiểm tra để tránh trùng cổng 8080 với stack observability.
+
+```text
+Total requests: 5
+Instances used: {'instance-39b6db', 'instance-9c8c05', 'instance-9cc32d'}
+Total messages: 10
+Session history preserved across all instances via Redis!
+```
+
+   - Ba instance phục vụ cùng một session. Redis dùng chung giữ đủ năm câu hỏi và năm câu trả lời.
+
+3. **Graceful Shutdown (SIGTERM):**
+   - Khi nhận SIGTERM (ví dụ từ `docker stop` hoặc rolling update), agent sử dụng cơ chế `lifespan` của FastAPI để hoàn tất tất cả request đang xử lý dở trước khi thoát. Uvicorn forward SIGTERM vào ứng dụng thông qua PID 1 (cú pháp `exec uvicorn ...` trong Dockerfile CMD đảm bảo điều này).
+   - Thực nghiệm: Gửi request tốn thời gian (giả lập slow LLM) rồi ngay lập tức gửi SIGTERM → request vẫn trả 200, không bị ngắt giữa chừng.
+
+4. **Rate Limiting bằng Redis Sliding Window:**
+   - Mỗi API key có một Sorted Set trong Redis (`rate_limit:<key>`). Mỗi request được ghi với timestamp, các entry cũ hơn 60 giây bị xóa (`ZREMRANGEBYSCORE`). Khi count ≥ limit → 429 kèm header `Retry-After: 60`.
+   - Kết quả kiểm tra: Sau đúng 10 request hợp lệ trong 60 giây, request thứ 11 trả `HTTP 429 Too Many Requests`.
+
+5. **Cost Guard:**
+   - Redis lưu tổng chi phí tích lũy theo key `cost_guard:total_cost_usd` bằng `INCRBYFLOAT`. Mỗi request gọi LLM ước tính số token (input_tokens/1000 × price_in + output_tokens/1000 × price_out) rồi cộng vào tổng. Khi tổng vượt `DAILY_BUDGET_USD` → chặn ngay bằng HTTP 402, không gọi LLM thêm.
+   - Điều này ngăn vòng lặp vô tận hoặc tấn công "prompt flooding" tiêu tốn toàn bộ ngân sách API trong thời gian ngắn.
 
 ---
 
 ## Part 6: Final Project Deliverable Checklist
 
-Output từ script chấm tự động `python check_production_ready.py`:
+Kiểm tra lại ngày 26/11/2026 bằng `python3 check_production_ready.py` trong Ubuntu WSL có Docker. Kết quả bản hiện tại:
 ```text
 ================================================================
   📋 Checklist Deliverable
@@ -136,7 +178,10 @@ Output từ script chấm tự động `python check_production_ready.py`:
 ---
 
 ## Mục Khai Báo Sử Dụng AI (AI Log — theo RULES.md)
-- **Công cụ sử dụng:** Antigravity AI Assistant.
+- **Công cụ sử dụng:** Antigravity AI Assistant và Codex.
+- **Hỗ trợ của Codex:** Đối chiếu log Railway và Docker, sửa đường dẫn thư viện Python trong Dockerfile Part 7, tổng hợp bảng scaling từ CSV và rà soát ba tài liệu nộp.
+- **Bằng chứng kiểm tra:** Người làm bài chạy lại stack sau khi sửa Dockerfile và ghi nhận ba agent healthy, gọi thử bốn endpoint Railway, chạy Locust và chụp ảnh Grafana, Jaeger, Prometheus. Các số scaling được đối chiếu với CSV.
+- **Rà soát bổ sung:** Codex chạy mẫu Part 1, đo image và gọi qua Nginx Part 2, chạy lại bài stateless Part 5 và script chấm Part 6 trên máy local. Mốc alert được đối chiếu với lịch sử Prometheus và trace được đối chiếu với log JSON của agent.
 - **Nội dung hỏi:**
   - Hướng dẫn cấu hình môi trường WSL2 / Docker trên Windows 11.
   - Phân tích yêu cầu và kiến trúc chuẩn 12 tiêu chí Production-ready AI Agent.

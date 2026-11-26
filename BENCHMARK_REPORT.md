@@ -1,7 +1,6 @@
 # Benchmark & Observability Report — Day 14
 
 **Họ tên:** Phạm Văn Chiêu  
-**Mã sinh viên:** 2A202604033  
 **Ngày chạy:** 26/11/2026  
 **Môi trường:** Windows 11 (WSL2 Ubuntu 22.04, Docker Desktop)
 
@@ -64,6 +63,8 @@ Agent v2 tiêu tốn token gấp đôi v1 (112.5 vs 56.4) do bổ sung context t
 
 ---
 
+Trong CI, chạy `eval/run_eval.py` với ngưỡng accuracy và baseline đã chọn. Exit code `1` làm job thất bại nếu accuracy dưới ngưỡng hoặc có regression. Đặt job đó làm kiểm tra bắt buộc để chặn merge khi eval thất bại.
+
 ## 4. Observability stack (production)
 
 ### 4.1 Screenshot
@@ -71,26 +72,49 @@ Agent v2 tiêu tốn token gấp đôi v1 (112.5 vs 56.4) do bổ sung context t
 - [x] Dashboard Grafana khi đang có tải: `screenshots/grafana-dashboard.png`
 - [x] Một trace chậm trong Jaeger: `screenshots/jaeger-slow-trace.png`
 - [x] Một trace lỗi trong Jaeger: `screenshots/jaeger-error-trace.png`
-- [x] Trang Alerts của Prometheus với ít nhất 1 alert đang **firing**: `screenshots/prometheus-alert-firing.png`
+- [x] Trang Alerts của Prometheus với ít nhất 2 alert đang **firing**: `screenshots/prometheus-alert-firing.png`
 
 ### 4.2 Thí nghiệm "phá hệ thống"
 
 | # | Thay đổi | Alert nào firing | Thời gian từ lúc đổi → firing | Panel nào phản ánh rõ nhất |
 |---|---|---|---|---|
-| A | `MOCK_ERROR_RATE=0.2` | HighErrorRate | ~15s | Error Rate (%) |
-| B | `MOCK_SLOW_RATE=0.3` | HighLatencyP95 | ~20s | Latency Quantiles (p95) |
-| C | `LLM_MODEL=mock-llm-large` | HighTokenConsumption | ~30s | Token Usage / Cost |
-| D | `docker pause` 1 instance | InstanceDown | ~10s | Active Targets / Up |
-| E | `AGENT_VERSION=v1` | Không có alert hệ thống | N/A | Golden Dataset Eval Gate |
+| A | `MOCK_ERROR_RATE=0.2` | `AgentHighErrorRate` | Pending 17:40:42 → firing 17:41:42 (60 giây từ pending) | Error rate khoảng 20,05%, vượt ngưỡng 5% |
+| B | `MOCK_SLOW_RATE=0.3` | `AgentHighLatencyP95` | Pending 17:40:37 → firing 17:42:37 (120 giây từ pending) | p95 khoảng 1,88 giây, vượt ngưỡng 1 giây |
+| C | `LLM_MODEL=mock-llm-large` | Chưa có kết quả đo | Chưa đo | Cost USD/giờ |
+| D | `docker pause` 1 instance | Chưa có kết quả đo | Chưa đo | Instances up |
+| E | `AGENT_VERSION=v1` | Phân tích dựa trên eval local | Không áp dụng | Quality gate |
 
-**Thí nghiệm E không làm alert nào firing. Bạn sẽ phát hiện loại sự cố này trong production bằng cách nào?**
+Các mốc trên lấy từ lịch sử metric `ALERTS` trên Prometheus ngày 26/11/2026, giờ Việt Nam. Thời điểm áp dụng cấu hình không được lưu, nên thời gian trong bảng tính từ mẫu `pending` đầu tiên.
+
+**Phát hiện regression chất lượng trong production**
 Sự cố tụt giảm độ chính xác tri thức (semantic regression) không gây lỗi HTTP hay chậm mạng nên metrics hạ tầng không báo động. Cách phát hiện là chạy định kỳ **Automated Continuous Eval (Quality Gate)** với bộ Golden Dataset trên môi trường staging/canary trước khi rollout, kết hợp thu thập user feedback (thumbs up/down) trong production.
 
 ### 4.3 Debug bằng trace
 
-- `trace_id`: `4f8a9b2c3d1e0f7a`
-- Span chậm nhất: `call_llm` chiếm 420ms trên tổng số 450ms của request.
-- Log JSON tương ứng:
-```json
-{"ts": "2026-11-26T15:45:12Z", "lvl": "INFO", "trace_id": "4f8a9b2c3d1e0f7a", "event": "llm_completion", "latency_ms": 420.5, "status": 200}
+- Trace chậm: `POST /ask` trả HTTP 200, tổng khoảng 1,7 giây. Span `chat mock-llm-small` khoảng 1,7 giây, còn `agent.retrieve_context` mất 26,2 ms. Jaeger hiển thị ID rút gọn `58f07df`.
+- Trace lỗi: `POST /ask` trả HTTP 503 trong 854 ms. Span `chat mock-llm-small` mất 836 ms và ghi exception `Upstream LLM error: 503 Service Unavailable (mock)`. Jaeger hiển thị ID rút gọn `d3b1a3e`.
+- Đối chiếu bổ sung bằng hai request khác với ảnh đã chụp. Jaeger API trả HTTP 200 khi truy vấn từng trace ID đầy đủ bên dưới. Log JSON của agent có cùng ID. Request chậm ghi nhận LLM mất 1.673,7 ms, còn request lỗi ghi nhận mock upstream trả 503.
+
+```jsonl
+{"ts":"2026-11-26T12:43:29.715007+00:00","level":"INFO","service":"observable-agent","instance":"5a1a08cccba7","event":"llm_call","trace_id":"0ba9162a2e8a6642fc775e816def2160","span_id":"0959f406deb0a95c","request_id":"64839ce8605b","model":"mock-llm-small","agent_version":"v2","input_tokens":95,"output_tokens":55,"cost_usd":4.7e-05,"llm_ms":1673.7}
+{"ts":"2026-11-26T13:31:19.789196+00:00","level":"INFO","service":"observable-agent","instance":"5a1a08cccba7","event":"llm_error","trace_id":"9632d80ec33254219b8caa863f3c6ee8","span_id":"1445a526010567aa","request_id":"6775c75d5f2d","error":"Upstream LLM error: 503 Service Unavailable (mock)"}
 ```
+
+## 5. Benchmark scaling (Locust headless, 100 users, 2 phút)
+
+Số liệu lấy từ dòng `POST /ask` trong hai file CSV đã lưu ở thư mục `benchmark-results/`.
+
+| Số instance | RPS | p50 (ms) | p95 (ms) | p99 (ms) | Failures |
+|---|---:|---:|---:|---:|---:|
+| 1 | 59,45 | 190 | 250 | 1.700 | 69/7.073 (0,98%) |
+| 3 | 59,34 | 190 | 250 | 1.700 | 67/7.062 (0,95%) |
+
+Với mức tải này, tăng từ 1 lên 3 instance giữ p95 ở 250 ms và RPS gần như bằng nhau. p99 vẫn ở 1.700 ms, phù hợp với độ trễ của một số lượt gọi mock LLM. Kết quả ở mức tải này chưa đủ để xác định giới hạn thông lượng của từng cấu hình. Cả hai lượt ghi nhận HTTP 503 ở `/ask` và không có lỗi ở `/health`.
+
+## 6. Kết luận
+
+1. p95 và p99 giúp quan sát tác động của các request chậm mà độ trễ trung bình dễ che khuất.
+2. Eval đo chất lượng câu trả lời. Sau khi bổ sung kiến thức, v2 đạt 23/23 câu đúng trong quality gate.
+3. Chạy cùng kịch bản trên 1 và 3 instance cho phép so sánh khả năng scale. Ở lượt đo này, p95 và RPS gần như giữ nguyên.
+
+Nếu đưa agent vào production, bổ sung metric tỷ lệ lỗi theo mã HTTP ở Nginx và alert cho lỗi 502/504 để phát hiện sự cố proxy hoặc timeout.

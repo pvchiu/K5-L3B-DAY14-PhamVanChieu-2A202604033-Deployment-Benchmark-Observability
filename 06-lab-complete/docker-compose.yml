@@ -5,10 +5,10 @@ services:
       - "8000:8000"
     environment:
       - REDIS_URL=redis://redis:6379/0
-      - AGENT_API_KEY=dev-secret-key
-      - RATE_LIMIT_PER_MINUTE=10
-      - DAILY_BUDGET_USD=10.0
-      - ENVIRONMENT=production
+      - AGENT_API_KEY=${AGENT_API_KEY:-dev-secret-key}
+      - RATE_LIMIT_PER_MINUTE=${RATE_LIMIT_PER_MINUTE:-10}
+      - DAILY_BUDGET_USD=${DAILY_BUDGET_USD:-10.0}
+      - ENVIRONMENT=${ENVIRONMENT:-production}
     depends_on:
       - redis
     restart: unless-stopped
