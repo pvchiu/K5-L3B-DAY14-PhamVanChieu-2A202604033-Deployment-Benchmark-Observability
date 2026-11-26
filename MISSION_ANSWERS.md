@@ -17,6 +17,8 @@
 
 ### Exercise 1.2: Chạy bản develop
 
+Ví dụ về cấu hình cổng: [Bản develop gán cứng `port=8000`](01-localhost-vs-production/develop/app.py#L52). [Bản production đọc biến `PORT`](01-localhost-vs-production/production/config.py#L18) và [truyền cổng đã đọc cho Uvicorn](01-localhost-vs-production/production/app.py#L197). Nền tảng deploy có thể cấp cổng qua env mà không cần đổi mã nguồn.
+
 App mẫu bind vào loopback, vì vậy hai request được gọi từ bên trong container chạy bản develop.
 
 ```text
@@ -111,6 +113,17 @@ content-type: application/json
 {"detail": "Rate limit exceeded"}
 ```
 
+**Kết quả chạy lại hai app mẫu qua HTTP trên Ubuntu WSL**
+
+```text
+Develop     POST /ask thiếu API key                → 401
+Develop     POST /ask có API key hợp lệ            → 200
+Production  POST /ask thiếu JWT                    → 401
+Production  POST /auth/token với tài khoản demo    → 200
+Production  POST /ask với JWT, request 1–10        → 200
+Production  POST /ask với JWT, request 11–12       → 429
+```
+
 ### Exercise 4.4: Thiết kế Cost Guard bảo vệ ngân sách
 - Sử dụng Redis để cộng dồn chi phí token (`cost_guard:total_cost_usd`) sau mỗi lần gọi LLM.
 - Trước khi gọi LLM, hàm `check_budget()` kiểm tra tổng chi phí hiện tại. Nếu vượt ngưỡng `DAILY_BUDGET_USD` (hoặc `MONTHLY_BUDGET_USD`), chặn ngay lập tức và trả về mã lỗi **HTTP 402 Payment Required** (hoặc Budget Exceeded), giúp ngăn chặn sự cố cạn kiệt ngân sách do vòng lặp vô tận hoặc tấn công DoS chi phí.
@@ -182,6 +195,7 @@ Kiểm tra lại ngày 26/11/2026 bằng `python3 check_production_ready.py` tro
 - **Hỗ trợ của Codex:** Đối chiếu log Railway và Docker, sửa đường dẫn thư viện Python trong Dockerfile Part 7, tổng hợp bảng scaling từ CSV và rà soát ba tài liệu nộp.
 - **Bằng chứng kiểm tra:** Người làm bài chạy lại stack sau khi sửa Dockerfile và ghi nhận ba agent healthy, gọi thử bốn endpoint Railway, chạy Locust và chụp ảnh Grafana, Jaeger, Prometheus. Các số scaling được đối chiếu với CSV.
 - **Rà soát bổ sung:** Codex chạy mẫu Part 1, đo image và gọi qua Nginx Part 2, chạy lại bài stateless Part 5 và script chấm Part 6 trên máy local. Mốc alert được đối chiếu với lịch sử Prometheus và trace được đối chiếu với log JSON của agent.
+- **Kiểm tra cuối:** Codex chạy lại HTTP test API key/JWT của Part 4, truy vấn mẫu Prometheus để trả lời Exercise 7.4 và đối chiếu ảnh deploy với các mã HTTP đã xác nhận.
 - **Nội dung hỏi:**
   - Hướng dẫn cấu hình môi trường WSL2 / Docker trên Windows 11.
   - Phân tích yêu cầu và kiến trúc chuẩn 12 tiêu chí Production-ready AI Agent.

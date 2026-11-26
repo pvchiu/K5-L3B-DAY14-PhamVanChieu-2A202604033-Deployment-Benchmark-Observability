@@ -56,5 +56,7 @@ curl -i -X POST https://k5-l3b-day14-phamvanchieu-2a202604033-deployment-product
 
 ## Screenshots
 - [Deployment dashboard](screenshots/dashboard.png)
-- [Service running](screenshots/running.png)
-- [Test results](screenshots/test.png)
+- [Service running và Deploy Logs của cả bốn kiểm tra](screenshots/running.png)
+- [Kết quả POST /ask có key, HTTP 200](screenshots/test.png)
+- [Kết quả GET /health, HTTP 200](screenshots/test3.png)
+- [Kết quả GET /ready, HTTP 200](screenshots/test4.png)

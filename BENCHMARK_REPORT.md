@@ -74,6 +74,13 @@ Trong CI, chạy `eval/run_eval.py` với ngưỡng accuracy và baseline đã c
 - [x] Một trace lỗi trong Jaeger: `screenshots/jaeger-error-trace.png`
 - [x] Trang Alerts của Prometheus với ít nhất 2 alert đang **firing**: `screenshots/prometheus-alert-firing.png`
 
+**Exercise 7.4**
+
+1. Mẫu Prometheus lúc 17:38:00 ngày 26/11/2026 (GMT+7) cho `POST /ask` có p95 **294,23 ms** và trung bình **237,80 ms**. Chênh khoảng **56,43 ms** cho thấy nhóm request chậm có thời gian phản hồi cao hơn mức trung bình. Tile p95 trong ảnh Grafana ở thời điểm chụp hiển thị **293,86 ms**.
+2. Cùng mẫu đó, ba replica nhận lần lượt **2,16**, **2,15** và **2,10 req/s**. Tải được phân phối gần đều trên ba replica của lần chạy này.
+3. Input khoảng **490,24 token/s**, output khoảng **253,92 token/s**. Agent v2 đưa câu hỏi cùng context truy xuất vào prompt, nên lượng token đầu vào lớn hơn lượng token từ câu trả lời.
+4. `GET http://localhost:8080/metrics` trả **HTTP 404**. Nginx chặn đường dẫn này và Prometheus scrape trực tiếp từ agent qua mạng nội bộ Docker.
+
 ### 4.2 Thí nghiệm "phá hệ thống"
 
 | # | Thay đổi | Alert nào firing | Thời gian từ lúc đổi → firing | Panel nào phản ánh rõ nhất |
