@@ -85,22 +85,28 @@ Trong CI, chạy `eval/run_eval.py` với ngưỡng accuracy và baseline đã c
 
 | # | Thay đổi | Alert nào firing | Thời gian từ lúc đổi → firing | Panel nào phản ánh rõ nhất |
 |---|---|---|---|---|
-| A | `MOCK_ERROR_RATE=0.2` | `AgentHighErrorRate` | Pending 17:40:42 → firing 17:41:42 (60 giây từ pending) | Error rate khoảng 20,05%, vượt ngưỡng 5% |
-| B | `MOCK_SLOW_RATE=0.3` | `AgentHighLatencyP95` | Pending 17:40:37 → firing 17:42:37 (120 giây từ pending) | p95 khoảng 1,88 giây, vượt ngưỡng 1 giây |
-| C | `LLM_MODEL=mock-llm-large` | Chưa có kết quả đo | Chưa đo | Cost USD/giờ |
-| D | `docker pause` 1 instance | Chưa có kết quả đo | Chưa đo | Instances up |
-| E | `AGENT_VERSION=v1` | Phân tích dựa trên eval local | Không áp dụng | Quality gate |
+| A | `MOCK_ERROR_RATE=0.2` | `AgentHighErrorRate` | Khoảng 74,0 giây | Error rate khoảng 22,36%, vượt ngưỡng 5% |
+| B | `MOCK_SLOW_RATE=0.3` | `AgentHighLatencyP95` | Khoảng 134,4 giây | p95 khoảng 1,89 giây, vượt ngưỡng 1 giây |
+| C | `LLM_MODEL=mock-llm-large` | `LLMCostBurnRateHigh` | Khoảng 144,1 giây | Chi phí ước tính 15,88 USD/giờ, vượt ngưỡng 2 USD/giờ |
+| D | `docker pause` 1 instance | `AgentInstanceDown` | Khoảng 40,3 giây | Prometheus ghi `up=0` cho instance bị pause |
+| E | `AGENT_VERSION=v1` | So sánh kết quả eval local | Không áp dụng | Quality gate: v1 đúng 1/23, v2 sau khi sửa đúng 23/23 |
 
-Các mốc trên lấy từ lịch sử metric `ALERTS` trên Prometheus ngày 26/11/2026, giờ Việt Nam. Thời điểm áp dụng cấu hình không được lưu, nên thời gian trong bảng tính từ mẫu `pending` đầu tiên.
+Đo lại A và B cùng lúc ngày 26/11/2026. Bắt đầu tính lúc chạy lệnh áp dụng cấu hình lúc 21:04:39, giờ Việt Nam, rồi chạy Locust với 30 users, ramp-up 5 users/giây. API Prometheus được kiểm tra khoảng 2 giây một lần. Ảnh Alerts chụp ở lần chạy trước cho thấy hai alert cùng firing, với error rate khoảng 20,05% và p95 khoảng 1,88 giây.
+
+Ở C, thời gian được tính từ lúc chạy lệnh đổi model lúc 21:06:59, với cùng cấu hình tải. Chi phí là ước tính của mock LLM.
+
+Ở D, thời gian được tính từ lúc chạy `docker pause` lúc 21:09:43. Container vẫn là một target trong Docker DNS nhưng Prometheus không scrape được. Sau khi ghi nhận alert, dùng `docker unpause` để khôi phục replica.
+
+Kiểm thử rule bằng `promtool test rules /p/alert_rules_test.yml` trả về `SUCCESS`.
 
 **Phát hiện regression chất lượng trong production**
 Sự cố tụt giảm độ chính xác tri thức (semantic regression) không gây lỗi HTTP hay chậm mạng nên metrics hạ tầng không báo động. Cách phát hiện là chạy định kỳ **Automated Continuous Eval (Quality Gate)** với bộ Golden Dataset trên môi trường staging/canary trước khi rollout, kết hợp thu thập user feedback (thumbs up/down) trong production.
 
 ### 4.3 Debug bằng trace
 
-- Trace chậm: `POST /ask` trả HTTP 200, tổng khoảng 1,7 giây. Span `chat mock-llm-small` khoảng 1,7 giây, còn `agent.retrieve_context` mất 26,2 ms. Jaeger hiển thị ID rút gọn `58f07df`.
-- Trace lỗi: `POST /ask` trả HTTP 503 trong 854 ms. Span `chat mock-llm-small` mất 836 ms và ghi exception `Upstream LLM error: 503 Service Unavailable (mock)`. Jaeger hiển thị ID rút gọn `d3b1a3e`.
-- Đối chiếu bổ sung bằng hai request khác với ảnh đã chụp. Jaeger API trả HTTP 200 khi truy vấn từng trace ID đầy đủ bên dưới. Log JSON của agent có cùng ID. Request chậm ghi nhận LLM mất 1.673,7 ms, còn request lỗi ghi nhận mock upstream trả 503.
+- [Trace chậm](screenshots/jaeger-slow-trace.png): `POST /ask` trả HTTP 200 trong khoảng 1,8 giây. Span con chậm nhất là `chat mock-llm-small`, khoảng 1,7 giây. Log ghi LLM mất **1.673,7 ms**, còn span `agent.retrieve_context` trên ảnh mất **17,4 ms**. ID trên ảnh bắt đầu bằng `0ba9162`.
+- [Trace lỗi](screenshots/jaeger-error-trace.png): `POST /ask` trả HTTP 503 trong **124 ms**. Span `chat mock-llm-small` có dấu lỗi đỏ và kéo dài khoảng **102 ms**. Log ghi `Upstream LLM error: 503 Service Unavailable (mock)`. ID trên ảnh bắt đầu bằng `9632d80`.
+- Hai ảnh Jaeger và hai dòng log bên dưới khớp theo `trace_id`. Jaeger API trả HTTP 200 khi truy vấn các ID đầy đủ.
 
 ```jsonl
 {"ts":"2026-11-26T12:43:29.715007+00:00","level":"INFO","service":"observable-agent","instance":"5a1a08cccba7","event":"llm_call","trace_id":"0ba9162a2e8a6642fc775e816def2160","span_id":"0959f406deb0a95c","request_id":"64839ce8605b","model":"mock-llm-small","agent_version":"v2","input_tokens":95,"output_tokens":55,"cost_usd":4.7e-05,"llm_ms":1673.7}

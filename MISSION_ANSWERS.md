@@ -196,6 +196,7 @@ Kiểm tra lại ngày 26/11/2026 bằng `python3 check_production_ready.py` tro
 - **Bằng chứng kiểm tra:** Người làm bài chạy lại stack sau khi sửa Dockerfile và ghi nhận ba agent healthy, gọi thử bốn endpoint Railway, chạy Locust và chụp ảnh Grafana, Jaeger, Prometheus. Các số scaling được đối chiếu với CSV.
 - **Rà soát bổ sung:** Codex chạy mẫu Part 1, đo image và gọi qua Nginx Part 2, chạy lại bài stateless Part 5 và script chấm Part 6 trên máy local. Mốc alert được đối chiếu với lịch sử Prometheus và trace được đối chiếu với log JSON của agent.
 - **Kiểm tra cuối:** Codex chạy lại HTTP test API key/JWT của Part 4, truy vấn mẫu Prometheus để trả lời Exercise 7.4 và đối chiếu ảnh deploy với các mã HTTP đã xác nhận.
+- **Bổ sung Part 7:** Codex chụp lại hai trace Jaeger để khớp với log JSON đã đối chiếu, rồi đo lại thời gian alert trên stack local từ lúc chạy lệnh áp dụng cấu hình.
 - **Nội dung hỏi:**
   - Hướng dẫn cấu hình môi trường WSL2 / Docker trên Windows 11.
   - Phân tích yêu cầu và kiến trúc chuẩn 12 tiêu chí Production-ready AI Agent.
